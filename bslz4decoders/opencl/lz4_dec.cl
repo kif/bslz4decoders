@@ -32,6 +32,33 @@ inline uint warpBallot(int vote)
     return result;
 }
 
+//count tailing zeros
+inline unsigned int ctz(unsigned int num){
+    /*
+    unsigned int count = 0;
+    while ((num & 1) == 0)
+    {
+        num = num >> 1;
+        count++;
+    }
+    return count;
+    */
+    
+    long x = num;
+    // Map a bit value mod 37 to its position
+    static constant int lookup[] = {32, 0, 1,
+     26, 2, 23, 27, 0, 3, 16, 24, 30, 28, 11,
+     0, 13, 4, 7, 17, 0, 25, 22, 31, 15, 29,
+     10, 12, 6, 0, 21, 14, 9, 5, 20, 8, 19,
+     18};
+ 
+     // Only difference between (x and -x) is
+     // the value of signed magnitude(leftmostbit)
+     // negative numbers signed bit is 1
+    return lookup[(-x & x) % 37];
+    
+}
+
 inline unsigned int brev(unsigned int num){
     unsigned int count = sizeof(num) * 8 - 1;
     unsigned int reverse_num = num;
@@ -56,6 +83,8 @@ inline offset_type readWord(const uchar* const address)
   }
   return word;
 }
+
+//Token class
 
 struct token_type
 {
@@ -131,6 +160,8 @@ if (hasNumMatchesOverflow(token)) {
   }
 }
 
+//BufferControl class
+
 struct BufferControl_type {
       uchar* buffer,
       uchar* compData,
@@ -176,25 +207,26 @@ inline uint8_t BCat(BufferControl_type bufferctl, const position_type i)
     }
 }
 
+//TODO: check this !
 inline void setAndAlignOffset(BufferControl_type bufferctl, const position_type offset)
-  {
-    static_assert(
-        sizeof(size_t) == sizeof(const uint8_t*),
-        "Size of pointer must be equal to size_t.");
+{
+static_assert(
+    sizeof(size_t) == sizeof(const uint8_t*),
+    "Size of pointer must be equal to size_t.");
 
-    const uint8_t* const alignedPtr = reinterpret_cast<const uint8_t*>(
-        (reinterpret_cast<size_t>(m_compData + offset)
-         / sizeof(double_word_type))
-        * sizeof(double_word_type));
+const uint8_t* const alignedPtr = reinterpret_cast<const uint8_t*>(
+    (reinterpret_cast<size_t>(m_compData + offset)
+     / sizeof(double_word_type))
+    * sizeof(double_word_type));
 
-    m_offset = alignedPtr - m_compData;
-  }
+m_offset = alignedPtr - m_compData;
+}
 
-  inline __device__ void loadAt(const position_type offset)
-  {
+inline void loadAt(BufferControl_type bufferctl, const position_type offset)
+{
     setAndAlignOffset(offset);
 
-    if (m_offset + DECOMP_INPUT_BUFFER_SIZE <= m_length) {
+    if (bufferctl.offset + DECOMP_INPUT_BUFFER_SIZE <= bufferctl.length) {
       assert(
           reinterpret_cast<size_t>(m_compData + m_offset)
               % sizeof(double_word_type)
@@ -208,7 +240,7 @@ inline void setAndAlignOffset(BufferControl_type bufferctl, const position_type 
           = reinterpret_cast<double_word_type*>(m_buffer);
       word_buffer[threadIdx.x] = word_data[threadIdx.x];
     } else {
-#pragma unroll
+    #pragma unroll
       for (int i = threadIdx.x; i < DECOMP_INPUT_BUFFER_SIZE;
            i += DECOMP_THREADS_PER_CHUNK) {
         if (m_offset + i < m_length) {
@@ -216,9 +248,9 @@ inline void setAndAlignOffset(BufferControl_type bufferctl, const position_type 
         }
       }
     }
-
+    
     syncCTA();
-  }
+}
 
 inline position_type BCbegin(BufferControl_type bufferctl)
 {
@@ -288,7 +320,7 @@ inline position_type lengthOfMatch(
                     : 1;
     match = warpBallot(match);
     if (match) {
-      match_length = j + clz(brev(match));
+      match_length = j + ctz(match); //clz(brev(match));
       break;
     }
   }
@@ -390,3 +422,33 @@ inline  void decompressStream(
   assert(comp_idx == comp_end);
 }
 
+// Kernel performing bitwise transposition to be called with a wg=(32,)
+
+kernel void bitshuffle_32(global uint *input,
+                          global uint *output,
+                                 uint size){
+    uint here = get_global_id(0);
+    uint lid = get_local_id(0);
+    if (here>=size)
+        return;
+    if (here+32 >=size){
+        //just copy remaining data
+        output[here] = input[here];
+        return;
+    }
+    local uint buffer[32];
+
+    //Load data into buffer:
+    buffer[lid] = input[here];
+    barrier(CLK_LOCAL_MEM_FENCE);
+    
+    uint result = 0;
+    uint mask = 1<<lid;
+    #pragma unroll 32
+    for (uint i=0; i<32; i++)
+        result |= buffer[i] && mask; 
+    
+    output[here] = result;
+}
+
+                     
