@@ -111,15 +111,6 @@ inline position_type numLiteralsOverflow(token_type token)
     }
 }
 
-inline uchar numLiteralsForHeader(token_type token)
-{
-    if (token.num_literals >= 15) {
-      return 15;
-    } else {
-      return token.num_literals;
-    }
-}
-
 inline position_type numMatchesOverflow(token_type token)
 {
     if (token.num_matches >= 19) {
@@ -129,46 +120,17 @@ inline position_type numMatchesOverflow(token_type token)
     }
 }
 
-inline uint8_t numMatchesForHeader(token_type token)
-{
-    if (token.num_matches >= 19) {
-      return 15;
-    } else {
-      return token.num_matches - 4;
-    }
-}
 
-inline position_type lengthOfLiteralEncoding(token_type token)
-{
-if (hasNumLiteralsOverflow(token)) {
-  position_type num = numLiteralsOverflow(token);
-  const position_type length = (num / 0xff) + 1;
-  return length;
-  } else {
-  return 0;
-}
-}
-
-inline position_type lengthOfMatchEncoding(token_type token)
-{
-if (hasNumMatchesOverflow(token)) {
-  const position_type num = numMatchesOverflow(token);
-  const position_type length = (num / 0xff) + 1;
-  return length;
-  } else {
-    return 0;
-  }
-}
 
 //BufferControl class
 
-struct BufferControl_type {
+struct BufferControl_t {
       uchar* buffer,
       uchar* compData,
       position_type length,
       position_type offset=0};
 
-inline position_type BCreadLSIC(BufferControl_type bufferctl, position_type& idx)
+inline position_type BCreadLSIC(BufferControl_t bufferctl, position_type& idx)
 {
     position_type num = 0;
     uint8_t next = 0xff;
@@ -187,17 +149,17 @@ inline position_type BCreadLSIC(BufferControl_type bufferctl, position_type& idx
     return num;
 }
 
-inline uint8_t* BCraw(BufferControl_type bufferctl)
+inline uint8_t* BCraw(BufferControl_t bufferctl)
 {
     return bufferctl.buffer;
 }
 
-inline uint8_t* BCrawAt(BufferControl_type bufferctl const position_type i)
+inline uint8_t* BCrawAt(BufferControl_t bufferctl const position_type i)
 {
 return BCraw(bufferctl) + (i - BCbegin(bufferctl));
 }
 
-inline uint8_t BCat(BufferControl_type bufferctl, const position_type i)
+inline uint8_t BCat(BufferControl_t bufferctl, const position_type i)
 {
     if (i >= bufferctl.offset && i - bufferctl.offset < DECOMP_INPUT_BUFFER_SIZE) 
     {
@@ -208,7 +170,7 @@ inline uint8_t BCat(BufferControl_type bufferctl, const position_type i)
 }
 
 //TODO: check this !
-inline void setAndAlignOffset(BufferControl_type bufferctl, const position_type offset)
+inline void setAndAlignOffset(BufferControl_t bufferctl, const position_type offset)
 {
 static_assert(
     sizeof(size_t) == sizeof(const uint8_t*),
@@ -219,32 +181,32 @@ const uint8_t* const alignedPtr = reinterpret_cast<const uint8_t*>(
      / sizeof(double_word_type))
     * sizeof(double_word_type));
 
-m_offset = alignedPtr - m_compData;
+bufferctl.offset = alignedPtr - m_compData;
 }
 
-inline void loadAt(BufferControl_type bufferctl, const position_type offset)
+inline void BCloadAt(BufferControl_t bufferctl, const position_type offset)
 {
     setAndAlignOffset(offset);
 
     if (bufferctl.offset + DECOMP_INPUT_BUFFER_SIZE <= bufferctl.length) {
       assert(
-          reinterpret_cast<size_t>(m_compData + m_offset)
+          reinterpret_cast<size_t>(m_compData + bufferctl.offset)
               % sizeof(double_word_type)
           == 0);
       assert(
           DECOMP_INPUT_BUFFER_SIZE
           == DECOMP_THREADS_PER_CHUNK * sizeof(double_word_type));
       const double_word_type* const word_data
-          = reinterpret_cast<const double_word_type*>(m_compData + m_offset);
+          = reinterpret_cast<const double_word_type*>(m_compData + bufferctl.offset);
       double_word_type* const word_buffer
           = reinterpret_cast<double_word_type*>(m_buffer);
       word_buffer[threadIdx.x] = word_data[threadIdx.x];
     } else {
     #pragma unroll
-      for (int i = threadIdx.x; i < DECOMP_INPUT_BUFFER_SIZE;
+      for (int i = get_local_id(0); i < DECOMP_INPUT_BUFFER_SIZE;
            i += DECOMP_THREADS_PER_CHUNK) {
-        if (m_offset + i < m_length) {
-          m_buffer[i] = m_compData[m_offset + i];
+        if (bufferctl.offset + i < m_length) {
+          m_buffer[i] = m_compData[bufferctl.offset + i];
         }
       }
     }
@@ -252,12 +214,12 @@ inline void loadAt(BufferControl_type bufferctl, const position_type offset)
     syncCTA();
 }
 
-inline position_type BCbegin(BufferControl_type bufferctl)
+inline position_type BCbegin(BufferControl_t bufferctl)
 {
     return bufferctl.offset;
 }
 
-inline position_type BCend(BufferControl_type bufferctl) 
+inline position_type BCend(BufferControl_t bufferctl) 
 {
     return bufferctl.offset + DECOMP_INPUT_BUFFER_SIZE;
 }
